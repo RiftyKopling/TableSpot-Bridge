@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<title>Dashboard Meja</title>
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+  import { getDatabase, ref, onValue, set }
+    from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+
+  // ===== GANTI dengan config dari TAHAP 4e =====
+  const firebaseConfig = {
+    apiKey: "AIzaSyCoOYFxotgQVsMfdjwTvhXvhJbENEU8n5k",
+    authDomain: "monitor-meja.firebaseapp.com",
+    databaseURL: "https://monitor-meja-default-rtdb.asia-southeast1.firebasedatabase.app",
+    projectId: "monitor-meja",
+    storageBucket: "monitor-meja.firebasestorage.app",
+    messagingSenderId: "324804788529",
+    appId: "1:324804788529:web:d5002695daeaf84f5fb010",
+    measurementId: "G-1L0MXP7947"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const db  = getDatabase(app);
+
+  const MEJA = [
+    { id: 1, kursi: [0, 1] },
+    { id: 2, kursi: [2, 3] },
+    { id: 3, kursi: [4] },
+    { id: 4, kursi: [5] },
+    { id: 5, kursi: [6] },
+  ];
+
+  const container = document.getElementById("meja-container");
+  const summary   = document.getElementById("summary");
+
+  function render() {
+    container.innerHTML = "";
+    MEJA.forEach(m => {
+      const div = document.createElement("div");
+      div.className = "meja";
+      div.innerHTML = `
+        <h3>Meja ${m.id}</h3>
+        <div class="kursi-list"></div>
+        <div class="status" id="status-${m.id}">-</div>`;
+      const klist = div.querySelector(".kursi-list");
+      m.kursi.forEach(kIdx => {
+        const k = document.createElement("div");
+        k.className = "kursi";
+        k.id = `kursi-${kIdx}`;
+        k.textContent = `K${kIdx + 1}`;
+        klist.appendChild(k);
+      });
+      container.appendChild(div);
+    });
+  }
+  render();
+
+  onValue(ref(db, "status"), snap => {
+    const data = snap.val();
+    if (!data) return;
+
+    (data.kursi || []).forEach((val, i) => {
+      const el = document.getElementById(`kursi-${i}`);
+      if (!el) return;
+      el.classList.toggle("kosong", val === 1);
+      el.classList.toggle("terisi", val === 0);
+    });
+
+    (data.meja || []).forEach((val, i) => {
+      const el = document.getElementById(`status-${i + 1}`);
+      if (!el) return;
+      el.textContent = val === 1 ? "KOSONG" : "TERISI";
+      el.className = "status " + (val === 1 ? "kosong" : "terisi");
+    });
+
+    summary.textContent =
+      `Kosong: ${data.kosong || 0} | Terisi: ${data.terisi || 0}`;
+  });
+
+  window.kirimLcd = function(text) {
+    set(ref(db, "command"), { lcd_line1: text });
+  };
+</script>
+
+<style>
+  body { font-family: sans-serif; background:#111; color:#eee; padding:20px; }
+  h1 { text-align:center; }
+  #summary { text-align:center; font-size:1.3em; margin-bottom:20px; }
+  #meja-container {
+    display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
+    gap:16px;
+  }
+  .meja { background:#222; border-radius:10px; padding:12px; text-align:center; }
+  .meja h3 { margin:0 0 10px; }
+  .kursi-list { display:flex; gap:6px; justify-content:center; flex-wrap:wrap; }
+  .kursi {
+    width:50px; height:50px; line-height:50px; border-radius:50%;
+    background:#444; font-size:.8em; transition:background .3s;
+  }
+  .kursi.kosong { background:#22c55e; color:#000; }
+  .kursi.terisi { background:#ef4444; color:#fff; }
+  .status { margin-top:10px; padding:4px; border-radius:6px; font-weight:bold; }
+  .status.kosong { background:#22c55e33; color:#22c55e; }
+  .status.terisi { background:#ef444433; color:#ef4444; }
+</style>
+</head>
+<body>
+  <h1>Status Meja & Kursi</h1>
+  <div id="summary">menunggu data...</div>
+  <div id="meja-container"></div>
+
+  <div style="text-align:center;margin-top:20px">
+    <input id="lcd-input" placeholder="Teks LCD (16 char)" maxlength="16">
+    <button onclick="kirimLcd(document.getElementById('lcd-input').value)">
+      Kirim ke LCD
+    </button>
+  </div>
+</body>
+</html>
