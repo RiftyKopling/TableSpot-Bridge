@@ -1,5 +1,6 @@
 import json
 import time
+import threading
 import paho.mqtt.client as mqtt
 import firebase_admin
 from firebase_admin import credentials, db
@@ -11,6 +12,10 @@ TOPIC_SENSOR = "esp32/sensor"
 
 FIREBASE_CRED = "serviceAccount2.json"
 FIREBASE_URL  = "https://tablespot-f67fe-default-rtdb.asia-southeast1.firebasedatabase.app/"  # GANTI!
+
+GRACE_PERIOD = 30  # <--- JEDA WAKTU (DALAM DETIK)
+# State untuk melacak timer per kursi
+pending_empty = {} # Format: { "K1": {"meja": "M1", "waktu_mulai_kosong": 123456789} }
 
 # Mapping indeks array dari ESP32 → ID dashboard
 KURSI_KE_TABLE = {
@@ -50,19 +55,39 @@ def update_seats(kursi_arr, ts_now):
     for idx, (k_id, m_id) in KURSI_KE_TABLE.items():
         if idx >= len(kursi_arr): continue
         
-        # Ambil nilai langsung (1, 0, atau -1)
         nilai_sensor = kursi_arr[idx] 
         new_status = status_to_label(nilai_sensor)
-        old_status = last_seat_status.get(k_id)
 
-        if old_status != new_status:
-            ref_seats.child(k_id).update({
-                "table":  m_id,
-                "status": new_status,
-                "since":  ts_now,
-            })
-            last_seat_status[k_id] = new_status
-            log_perubahan_kursi(k_id, m_id, new_status)
+        # --- LOGIKA GRACE PERIOD DIMULAI DI SINI ---
+        if new_status == "occupied":
+            # Jika pelanggan kembali (duduk lagi), batalkan timer kosong
+            if k_id in pending_empty:
+                print(f"[GRACE] {k_id} kembali terisi. Batalkan timer.")
+                del pending_empty[k_id]
+            
+            # Update jika memang statusnya baru terisi
+            if last_seat_status.get(k_id) != "occupied":
+                ref_seats.child(k_id).update({"table": m_id, "status": "occupied", "since": ts_now})
+                last_seat_status[k_id] = "occupied"
+                log_perubahan_kursi(k_id, m_id, "occupied")
+
+        elif new_status == "available":
+            # Jika sebelumnya terisi, jangan langsung kosongkan. Mulai timer!
+            if last_seat_status.get(k_id) == "occupied":
+                if k_id not in pending_empty:
+                    pending_empty[k_id] = {"meja": m_id, "waktu_mulai": ts_now}
+                    print(f"[GRACE] {k_id} terlihat kosong. Menunggu {GRACE_PERIOD} detik...")
+            
+            # Jika timer sudah ada dan waktunya habis, baru kirim ke Firebase
+            elif k_id in pending_empty:
+                selisih_detik = (ts_now - pending_empty[k_id]["waktu_mulai"]) / 1000
+                if selisih_detik >= GRACE_PERIOD:
+                    print(f"[GRACE] {k_id} benar-benar kosong.")
+                    ref_seats.child(k_id).update({"table": m_id, "status": "available", "since": ts_now})
+                    last_seat_status[k_id] = "available"
+                    log_perubahan_kursi(k_id, m_id, "available")
+                    del pending_empty[k_id] # Hapus timer
+        # --- LOGIKA GRACE PERIOD SELESAI ---
 
 def update_tables(meja_arr, ts_now):
     for idx, m_id in enumerate(MEJA_IDS):
