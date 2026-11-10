@@ -40,49 +40,44 @@ last_beat_time    = 0    # untuk throttle update beat (jangan spam)
 TIMEOUT_OFFLINE = 30     # detik, kalau ESP32 diam >30s → offline
 
 # ============ FUNGSI ============
-def status_to_label(kosong_bool):
-    return "available" if kosong_bool else "occupied"
+def status_to_label(kosong_val):
+    # 1 = available (kosong), 0 = occupied (terisi), -1 = offline (error)
+    if kosong_val == -1:
+        return "offline"
+    return "available" if kosong_val == 1 else "occupied"
 
 def update_seats(kursi_arr, ts_now):
-    """Update /seats/K1..K7 dengan deteksi perubahan 'since'."""
-    updates = {}
-    for idx, (k_id, _m_id) in KURSI_KE_TABLE.items():
-        if idx >= len(kursi_arr):
-            continue
-        new_status = status_to_label(kursi_arr[idx] == 1)
+    for idx, (k_id, m_id) in KURSI_KE_TABLE.items():
+        if idx >= len(kursi_arr): continue
+        
+        # Ambil nilai langsung (1, 0, atau -1)
+        nilai_sensor = kursi_arr[idx] 
+        new_status = status_to_label(nilai_sensor)
         old_status = last_seat_status.get(k_id)
 
         if old_status != new_status:
-            # status berubah → update 'since'
-            updates[k_id] = {
-                "table":  _m_id,
+            ref_seats.child(k_id).update({
+                "table":  m_id,
                 "status": new_status,
                 "since":  ts_now,
-            }
+            })
             last_seat_status[k_id] = new_status
-        # kalau tidak berubah → tidak perlu tulis (hemat kuota)
-
-    for k_id, payload in updates.items():
-        ref_seats.child(k_id).update(payload)
+            log_perubahan_kursi(k_id, m_id, new_status)
 
 def update_tables(meja_arr, ts_now):
-    """Update /tables/M1..M5 dengan deteksi perubahan 'since'."""
-    updates = {}
     for idx, m_id in enumerate(MEJA_IDS):
-        if idx >= len(meja_arr):
-            continue
-        new_status = status_to_label(meja_arr[idx] == 1)
+        if idx >= len(meja_arr): continue
+        
+        nilai_meja = meja_arr[idx]
+        new_status = status_to_label(nilai_meja)
         old_status = last_table_status.get(m_id)
 
         if old_status != new_status:
-            updates[m_id] = {
+            ref_tables.child(m_id).update({
                 "status": new_status,
                 "since":  ts_now,
-            }
+            })
             last_table_status[m_id] = new_status
-
-    for m_id, payload in updates.items():
-        ref_tables.child(m_id).update(payload)
 
 def init_all_offline():
     """Saat bridge start, tandai semua kursi/meja 'offline' dulu."""
@@ -127,6 +122,32 @@ def on_message(client, userdata, msg):
     if ts_now - last_beat_time > 1000:
         ref_beat.set(ts_now)
         last_beat_time = ts_now
+
+# ============ FITUR STATISTIK (LOGGER) ============
+import datetime
+ref_history = db.reference("history")
+
+def log_perubahan_kursi(k_id, m_id, status_baru):
+    """
+    Catat perubahan status ke /history/{YYYY-MM-DD}/{k_id}_{timestamp}
+    Hanya catat saat berubah (bukan setiap detik).
+    """
+    if status_baru == "offline":
+        return # Abaikan offline untuk statistik pemakaian
+
+    now = datetime.datetime.now()
+    tgl = now.strftime("%Y-%m-%d")
+    ts = int(now.timestamp() * 1000)
+    
+    # Simpan log
+    ref_history.child(tgl).push({
+        "tipe": "kursi",
+        "id": k_id,
+        "meja": m_id,
+        "status": status_baru,
+        "ts": ts
+    })
+    print(f"[LOG] {k_id} -> {status_baru}")
 
 mqtt_client = mqtt.Client(client_id="python-bridge")
 mqtt_client.on_connect = on_connect
